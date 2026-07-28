@@ -1,0 +1,44 @@
+name: ci
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: build + test
+    # macos-15 for Swift 6: swift-jinja (transitive via swift-transformers)
+    # does not resolve on the Swift 5.x toolchain shipped with macos-14.
+    runs-on: macos-15
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: swift version
+        run: swift --version
+
+      - name: cache SwiftPM
+        uses: actions/cache@v4
+        with:
+          path: |
+            .build
+            ~/Library/Caches/org.swift.swiftpm
+          key: spm-${{ runner.os }}-${{ hashFiles('Package.resolved') }}
+          restore-keys: spm-${{ runner.os }}-
+
+      - name: build
+        run: swift build --arch arm64
+
+      - name: test
+        run: swift test --arch arm64
+
+      - name: build release
+        run: swift build -c release --arch arm64
