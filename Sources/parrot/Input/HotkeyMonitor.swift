@@ -10,16 +10,15 @@ final class HotkeyMonitor {
     enum Event { case pressed, released }
     enum HotkeyError: Error { case tapCreateFailed }
 
-    /// Mask of the modifier we treat as the hotkey. Fn = `.maskSecondaryFn`.
-    private let mask: CGEventFlags
+    private let hotkey: Hotkey
     private let debug: Bool
     private var onEvent: ((Event) -> Void)?
     private var tap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
     private var isPressed = false
 
-    init(mask: CGEventFlags = .maskSecondaryFn, debug: Bool = false) {
-        self.mask = mask
+    init(hotkey: Hotkey = .fn, debug: Bool = false) {
+        self.hotkey = hotkey
         self.debug = debug
     }
 
@@ -97,14 +96,15 @@ final class HotkeyMonitor {
         if debug {
             let flags = event.flags
             let keycode = event.getIntegerValueField(.keyboardEventKeycode)
+            let held = flags.contains(hotkey.flagMask) ? 1 : 0
             FileHandle.standardError.write(
                 Data(
-                    "  [debug] type=\(type.rawValue) keycode=\(keycode) flags=\(String(flags.rawValue, radix: 16))\n"
+                    "  [debug] type=\(type.rawValue) keycode=\(keycode) flags=\(String(flags.rawValue, radix: 16)) \(hotkey.rawValue)=\(held)\n"
                         .utf8
                 ))
         }
         guard type == .flagsChanged else { return }
-        let pressed = event.flags.contains(mask)
+        let pressed = event.flags.contains(hotkey.flagMask)
         guard pressed != isPressed else { return }
         isPressed = pressed
         onEvent?(pressed ? .pressed : .released)
