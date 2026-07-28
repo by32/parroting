@@ -41,6 +41,19 @@ parrot --hotkey right-option           # change the push-to-talk key
 parrot --no-overlay                    # disable the bottom-of-screen pill
 ```
 
+## Config
+
+Optional. Defaults are fine; edit `~/.config/parrot/config.toml` to make a flag stick:
+
+```toml
+model = "whisper-large-v3-turbo"
+hotkey = "fn"        # fn, right-option, right-command
+overlay = true       # bottom-of-screen recording pill
+```
+
+CLI flags override the file, the file overrides the defaults. There is no
+settings UI — this file is it.
+
 ## Stack
 
 - **Swift** — single SPM executable target

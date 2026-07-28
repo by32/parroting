@@ -28,19 +28,33 @@ struct Run: ParsableCommand {
     @Flag(name: .long, help: "Write each capture to /tmp/parrot-last.wav for inspection.")
     var dumpWav: Bool = false
 
-    @Flag(name: .long, help: "Disable the on-screen recording overlay.")
-    var noOverlay: Bool = false
+    @Flag(
+        inversion: .prefixedNo,
+        help: "Show the on-screen recording overlay. (default: true)"
+    )
+    var overlay: Bool?
 
     @Option(name: .long, help: "Model id to use. Defaults to the recommended model.")
     var model: String?
 
     @Option(
         name: .long,
-        help: "Push-to-talk key: \(Hotkey.allValueStrings.joined(separator: ", "))."
+        help: "Push-to-talk key: \(Hotkey.allValueStrings.joined(separator: ", ")). (default: fn)"
     )
-    var hotkey: Hotkey = .fn
+    var hotkey: Hotkey?
 
     func run() throws {
+        let config: Config
+        do {
+            config = try Config.load()
+        } catch {
+            FileHandle.standardError.write(Data("config error: \(error)\n".utf8))
+            throw ExitCode(1)
+        }
+
+        let hotkey = self.hotkey ?? config.hotkey ?? .fn
+        let showOverlay = self.overlay ?? config.overlay ?? true
+
         if !skipDoctor {
             let checks = DoctorReport.run(hotkey: hotkey)
             if !DoctorReport.allOK(checks) {
@@ -52,7 +66,7 @@ struct Run: ParsableCommand {
         }
 
         let chosenModel: TranscriptionModel
-        if let id = model {
+        if let id = model ?? config.model {
             guard let m = ModelRegistry.find(id) else {
                 FileHandle.standardError.write(Data("unknown model: \(id)\n".utf8))
                 FileHandle.standardError.write(Data("run `parrot models list` to see options.\n".utf8))
@@ -90,7 +104,9 @@ struct Run: ParsableCommand {
         let monitor = HotkeyMonitor(hotkey: hotkey, debug: debugHotkey)
         let capture = AudioCapture()
         let dumpWav = self.dumpWav
-        let overlay: RecordingOverlay? = noOverlay ? nil : MainActor.assumeIsolated { RecordingOverlay() }
+        let overlay: RecordingOverlay? = showOverlay
+            ? MainActor.assumeIsolated { RecordingOverlay() }
+            : nil
         if let overlay {
             capture.onLevel = { level in overlay.pushLevel(level) }
         }
@@ -193,12 +209,13 @@ struct Doctor: ParsableCommand {
 
     @Option(
         name: .long,
-        help: "Push-to-talk key to check for: \(Hotkey.allValueStrings.joined(separator: ", "))."
+        help: "Push-to-talk key to check for: \(Hotkey.allValueStrings.joined(separator: ", ")). (default: fn)"
     )
-    var hotkey: Hotkey = .fn
+    var hotkey: Hotkey?
 
     func run() throws {
-        let checks = DoctorReport.run(hotkey: hotkey)
+        let config = (try? Config.load()) ?? .empty
+        let checks = DoctorReport.run(hotkey: hotkey ?? config.hotkey ?? .fn)
         DoctorReport.print(checks)
         if !DoctorReport.allOK(checks) {
             throw ExitCode(1)
