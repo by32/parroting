@@ -124,7 +124,9 @@ struct Run: ParsableCommand {
                             FileHandle.standardError.write(Data("  wav write failed: \(error)\n".utf8))
                         }
                     }
-                    guard !samples.isEmpty else {
+                    let verdict = CaptureGate.evaluate(sampleCount: samples.count, rms: rms)
+                    if let reason = verdict.rejectionReason {
+                        FileHandle.standardError.write(Data("  skipped · \(reason)\n".utf8))
                         MainActor.assumeIsolated {
                             overlay?.hide()
                             menuBar.setRecording(false)

@@ -12,10 +12,17 @@ final class AudioCapture {
 
     static let targetSampleRate: Double = 16_000
 
+    /// Hard cap on a single capture. A hotkey whose release edge gets lost
+    /// would otherwise grow the buffer until the process runs out of memory.
+    static let maxCaptureSeconds: Double = 300
+
+    private static let maxSamples = Int(targetSampleRate * maxCaptureSeconds)
+
     private let engine = AVAudioEngine()
     private var converter: AVAudioConverter?
     private var samples: [Float] = []
     private var isRecording = false
+    private var didWarnTruncated = false
     private let lock = NSLock()
 
     /// Called for every audio buffer with the buffer's RMS level (0…~1).
@@ -43,6 +50,7 @@ final class AudioCapture {
 
         lock.lock()
         samples.removeAll(keepingCapacity: true)
+        didWarnTruncated = false
         lock.unlock()
 
         // Tap with input format; convert inside the callback.
@@ -110,8 +118,20 @@ final class AudioCapture {
         let chunk = Array(UnsafeBufferPointer(start: ptr, count: count))
 
         lock.lock()
-        samples.append(contentsOf: chunk)
+        let room = Self.maxSamples - samples.count
+        if room > 0 {
+            samples.append(contentsOf: chunk.prefix(room))
+        }
+        let shouldWarn = samples.count >= Self.maxSamples && !didWarnTruncated
+        if shouldWarn { didWarnTruncated = true }
         lock.unlock()
+
+        if shouldWarn {
+            FileHandle.standardError.write(Data(
+                String(format: "! capture hit the %.0fs limit — discarding further audio\n",
+                       Self.maxCaptureSeconds).utf8
+            ))
+        }
 
         if let onLevel {
             onLevel(computeRMS(chunk))
@@ -158,6 +178,44 @@ enum WAVWriter {
     private static func uint16LE(_ v: UInt16) -> Data {
         var x = v.littleEndian
         return Data(bytes: &x, count: 2)
+    }
+}
+
+// MARK: - Capture gate
+
+/// Decides whether a capture is worth handing to the transcriber. Whisper
+/// invents plausible-sounding text ("Thank you.", "Okay.") from near-silence
+/// and from clips too short to hold a word, so those are dropped instead.
+enum CaptureGate {
+    static let minSeconds: Double = 0.2
+    static let minRMS: Float = 0.004
+
+    enum Verdict: Equatable {
+        case transcribe
+        case empty
+        case tooShort(seconds: Double)
+        case tooQuiet(rms: Float)
+
+        var rejectionReason: String? {
+            switch self {
+            case .transcribe: return nil
+            case .empty: return "no audio captured"
+            case .tooShort(let s): return String(format: "too short (%.2fs)", s)
+            case .tooQuiet(let r): return String(format: "too quiet (rms %.4f)", r)
+            }
+        }
+    }
+
+    static func evaluate(
+        sampleCount: Int,
+        rms: Float,
+        sampleRate: Double = AudioCapture.targetSampleRate
+    ) -> Verdict {
+        guard sampleCount > 0 else { return .empty }
+        let seconds = Double(sampleCount) / sampleRate
+        if seconds < minSeconds { return .tooShort(seconds: seconds) }
+        if rms < minRMS { return .tooQuiet(rms: rms) }
+        return .transcribe
     }
 }
 

@@ -36,7 +36,7 @@ final class MenuBarController {
         menu.addItem(quit)
 
         statusItem.menu = menu
-        configureButton(recording: false)
+        configureButton()
     }
 
     func setRecording(_ recording: Bool) {
@@ -47,7 +47,7 @@ final class MenuBarController {
         stateLabel.title = "transcribing…"
     }
 
-    private func configureButton(recording: Bool) {
+    private func configureButton() {
         guard let button = statusItem.button else { return }
         let image = Self.birdImage()
         image?.isTemplate = true

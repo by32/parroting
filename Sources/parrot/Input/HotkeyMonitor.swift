@@ -76,6 +76,23 @@ final class HotkeyMonitor {
         onEvent = nil
     }
 
+    /// The system disables a tap that takes too long to process an event, or
+    /// when the user triggers certain input sequences. Re-enable it, otherwise
+    /// the daemon looks alive but never sees another keypress.
+    fileprivate func reenableAfterDisable(reason: CGEventType) {
+        guard let tap else { return }
+        CGEvent.tapEnable(tap: tap, enable: true)
+        let label = reason == .tapDisabledByTimeout ? "timeout" : "user input"
+        FileHandle.standardError.write(Data("hotkey tap disabled by \(label) — re-enabled\n".utf8))
+
+        // A hold that was in flight when the tap died will never see its
+        // release edge, so synthesize one to avoid a stuck recording.
+        if isPressed {
+            isPressed = false
+            onEvent?(.released)
+        }
+    }
+
     fileprivate func handle(type: CGEventType, event: CGEvent) {
         if debug {
             let flags = event.flags
@@ -104,8 +121,9 @@ private func hotkeyCallback(
     let monitor = Unmanaged<HotkeyMonitor>.fromOpaque(userInfo).takeUnretainedValue()
 
     if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
-        // System disabled our tap; we'll need to re-enable. For now just no-op
-        // and let the user restart parrot.
+        DispatchQueue.main.async {
+            monitor.reenableAfterDisable(reason: type)
+        }
         return Unmanaged.passUnretained(event)
     }
 
