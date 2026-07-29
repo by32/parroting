@@ -18,9 +18,13 @@ struct Config: Equatable {
     /// cannot drift out of sync with what `parse` actually accepts.
     static let validKeys = ["model", "hotkey", "language", "sensitivity", "overlay"]
 
-    static var defaultURL: URL {
+    static var directoryURL: URL {
         FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".config/parrot/config.toml")
+            .appendingPathComponent(".config/parrot")
+    }
+
+    static var defaultURL: URL {
+        directoryURL.appendingPathComponent("config.toml")
     }
 
     /// Reads and parses the config file. A missing file yields an empty config;
@@ -31,136 +35,60 @@ struct Config: Equatable {
         return try parse(text, source: url.path)
     }
 
-    /// Parses the flat subset of TOML the config schema needs: `key = value`
-    /// lines where value is a quoted string or a bare `true`/`false`. Tables,
-    /// arrays, and escape sequences are deliberately unsupported — the schema
-    /// has three scalar keys, and rejecting the rest keeps a hand-rolled parser
-    /// honest instead of pretending to be a TOML implementation.
+    /// Later assignments of the same key win, matching how a hand-edited file
+    /// reads top to bottom.
     static func parse(_ text: String, source: String? = nil) throws -> Config {
         var config = Config()
 
-        for (index, rawLine) in text.components(separatedBy: .newlines).enumerated() {
-            let line = stripComment(rawLine).trimmingCharacters(in: .whitespaces)
-            if line.isEmpty { continue }
-
-            let at = Location(source: source, line: index + 1)
-
-            if line.hasPrefix("[") {
-                throw ConfigError.syntax(at, "tables are not supported; use a flat list of key = value")
-            }
-            guard let equals = line.firstIndex(of: "=") else {
-                throw ConfigError.syntax(at, "expected key = value")
-            }
-
-            let key = String(line[..<equals]).trimmingCharacters(in: .whitespaces)
-            let value = String(line[line.index(after: equals)...]).trimmingCharacters(in: .whitespaces)
-            guard !key.isEmpty else {
-                throw ConfigError.syntax(at, "missing key before '='")
-            }
-
-            switch key {
+        for pair in try FlatTOML.parse(text, source: source) {
+            switch pair.key {
             case "model":
-                config.model = try string(value, key: key, at: at)
+                config.model = try pair.stringValue()
+
             case "hotkey":
-                let name = try string(value, key: key, at: at)
+                let name = try pair.stringValue()
                 guard let parsed = Hotkey(rawValue: name) else {
                     throw ConfigError.syntax(
-                        at,
+                        pair.at,
                         "unknown hotkey \"\(name)\"; expected one of "
                             + Hotkey.allValueStrings.joined(separator: ", ")
                     )
                 }
                 config.hotkey = parsed
+
             case "language":
-                let name = try string(value, key: key, at: at)
+                let name = try pair.stringValue()
                 guard let parsed = LanguageSetting(parsing: name) else {
                     throw ConfigError.syntax(
-                        at,
+                        pair.at,
                         "unknown language \"\(name)\"; expected auto or a Whisper language code like en, es, fr"
                     )
                 }
                 config.language = parsed
+
             case "sensitivity":
-                let name = try string(value, key: key, at: at)
+                let name = try pair.stringValue()
                 guard let parsed = CaptureGate.Sensitivity(rawValue: name) else {
                     throw ConfigError.syntax(
-                        at,
+                        pair.at,
                         "unknown sensitivity \"\(name)\"; expected one of "
                             + CaptureGate.Sensitivity.allValueStrings.joined(separator: ", ")
                     )
                 }
                 config.sensitivity = parsed
+
             case "overlay":
-                config.overlay = try bool(value, key: key, at: at)
+                config.overlay = try pair.boolValue()
+
             default:
                 throw ConfigError.syntax(
-                    at,
-                    "unknown key \"\(key)\"; valid keys are " + Self.validKeys.joined(separator: ", ")
+                    pair.at,
+                    "unknown key \"\(pair.key)\"; valid keys are "
+                        + Self.validKeys.joined(separator: ", ")
                 )
             }
         }
 
         return config
-    }
-
-    /// Drops a trailing `#` comment without treating `#` inside a quoted value
-    /// as a comment marker.
-    private static func stripComment(_ line: String) -> String {
-        var out = ""
-        var openQuote: Character?
-        for ch in line {
-            if let quote = openQuote {
-                if ch == quote { openQuote = nil }
-                out.append(ch)
-            } else if ch == "\"" || ch == "'" {
-                openQuote = ch
-                out.append(ch)
-            } else if ch == "#" {
-                break
-            } else {
-                out.append(ch)
-            }
-        }
-        return out
-    }
-
-    private static func string(_ value: String, key: String, at: Location) throws -> String {
-        guard let first = value.first, first == "\"" || first == "'" else {
-            throw ConfigError.syntax(at, "\(key) must be quoted, e.g. \(key) = \"\(value)\"")
-        }
-        guard value.count >= 2, value.last == first else {
-            throw ConfigError.syntax(at, "unterminated string for \(key)")
-        }
-        return String(value.dropFirst().dropLast())
-    }
-
-    private static func bool(_ value: String, key: String, at: Location) throws -> Bool {
-        switch value {
-        case "true": return true
-        case "false": return false
-        default:
-            throw ConfigError.syntax(at, "\(key) must be true or false, got \"\(value)\"")
-        }
-    }
-}
-
-struct Location: Equatable {
-    let source: String?
-    let line: Int
-
-    var description: String {
-        guard let source else { return "line \(line)" }
-        return "\(source):\(line)"
-    }
-}
-
-enum ConfigError: Error, CustomStringConvertible, Equatable {
-    case syntax(Location, String)
-
-    var description: String {
-        switch self {
-        case .syntax(let at, let message):
-            return "\(at.description): \(message)"
-        }
     }
 }
