@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en</string>
+	<key>CFBundleExecutable</key>
+	<string>parrot</string>
+	<key>CFBundleIdentifier</key>
+	<string>io.github.by32.parroting</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>Parrot</string>
+	<key>CFBundleDisplayName</key>
+	<string>Parrot</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>__VERSION__</string>
+	<key>CFBundleVersion</key>
+	<string>__VERSION__</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>14.0</string>
+	<!-- Menu-bar only: no dock icon, no main window. Matches the daemon's
+	     NSApplication .accessory activation policy. -->
+	<key>LSUIElement</key>
+	<true/>
+	<!-- Mandatory. A bundled app that asks for the microphone without this key
+	     is terminated by the system rather than prompted. -->
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Parrot records audio while you hold the dictation hotkey so it can transcribe your speech on this Mac.</string>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+</dict>
+</plist>

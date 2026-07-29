@@ -14,7 +14,7 @@ jobs:
     name: build arm64 macOS binary
     # macos-26 for the macOS 26 SDK — see scripts/verify-binary.sh.
     runs-on: macos-26
-    timeout-minutes: 30
+    timeout-minutes: 60
 
     steps:
       - uses: actions/checkout@v4
@@ -43,16 +43,111 @@ jobs:
           file "$BIN"
           mkdir -p dist
           cp "$BIN" dist/parrot
+          strip -x dist/parrot
 
-      - name: strip
-        run: strip -x dist/parrot
+      # A tag that disagrees with Version.current would ship a binary that
+      # misreports itself and a Homebrew formula pinned to the wrong version.
+      - name: resolve version
+        id: version
+        run: |
+          BUILT=$(./dist/parrot --version)
+          if [ "${GITHUB_REF_TYPE:-}" = "tag" ]; then
+            TAG="${GITHUB_REF_NAME#v}"
+            if [ "$BUILT" != "$TAG" ]; then
+              echo "::error::tag $GITHUB_REF_NAME implies version $TAG but the binary reports $BUILT — bump Version.current"
+              exit 1
+            fi
+          fi
+          echo "version=$BUILT" >> "$GITHUB_OUTPUT"
+          echo "resolved version $BUILT"
 
-      - name: package
+      - name: package CLI tarball
         run: |
           cd dist
           tar -czf parrot-macos-arm64.tar.gz parrot
           shasum -a 256 parrot-macos-arm64.tar.gz > parrot-macos-arm64.tar.gz.sha256
-          ls -lh
+          cat parrot-macos-arm64.tar.gz.sha256
+
+      - name: bundle Parrot.app
+        run: ./scripts/bundle-app.sh dist/parrot "${{ steps.version.outputs.version }}" dist
+
+      # Signing is optional so the unsigned CLI still ships when no certificate
+      # is configured. Secrets are unreadable in step-level `if:`, so the
+      # decision has to be turned into an output first.
+      - name: detect signing configuration
+        id: signing
+        env:
+          CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+        run: |
+          if [ -n "$CERT_P12" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+            echo "signing is configured"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::MACOS_CERT_P12 is not set — publishing the unsigned CLI only. The .app/DMG and the Accessibility-survives-upgrade behaviour need a Developer ID certificate."
+          fi
+
+      - name: import Developer ID certificate
+        if: steps.signing.outputs.enabled == 'true'
+        env:
+          CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+          CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+        run: |
+          KEYCHAIN="$RUNNER_TEMP/signing.keychain-db"
+          KEYCHAIN_PASSWORD=$(uuidgen)
+          echo "KEYCHAIN=$KEYCHAIN" >> "$GITHUB_ENV"
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+
+          CERT="$RUNNER_TEMP/cert.p12"
+          (umask 077; printf '%s' "$CERT_P12" | base64 --decode > "$CERT")
+          security import "$CERT" -k "$KEYCHAIN" -P "$CERT_PASSWORD" \
+            -T /usr/bin/codesign -T /usr/bin/security
+          rm -f "$CERT"
+
+          # Without this, codesign blocks on a GUI prompt for keychain access.
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" >/dev/null
+
+          # Prepend to the search list rather than replacing it, so the system
+          # roots needed to validate the cert chain stay reachable.
+          security list-keychains -d user -s "$KEYCHAIN" \
+            $(security list-keychains -d user | tr -d '"')
+
+          IDENTITY=$(security find-identity -v -p codesigning "$KEYCHAIN" \
+            | sed -nE 's/.*"(Developer ID Application: [^"]+)".*/\1/p' | head -1)
+          if [ -z "$IDENTITY" ]; then
+            echo "::error::the imported certificate is not a 'Developer ID Application' certificate. Apple Distribution and Apple Development certs cannot sign for direct distribution."
+            security find-identity -v -p codesigning "$KEYCHAIN" || true
+            exit 1
+          fi
+          echo "SIGN_IDENTITY=$IDENTITY" >> "$GITHUB_ENV"
+          echo "will sign as: $IDENTITY"
+
+      - name: sign, notarize, and build DMG
+        if: steps.signing.outputs.enabled == 'true'
+        env:
+          NOTARY_KEY_P8: ${{ secrets.NOTARY_KEY_P8 }}
+          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
+          NOTARY_APPLE_ID: ${{ secrets.NOTARY_APPLE_ID }}
+          NOTARY_PASSWORD: ${{ secrets.NOTARY_PASSWORD }}
+          NOTARY_TEAM_ID: ${{ secrets.NOTARY_TEAM_ID }}
+        run: |
+          ./scripts/sign-notarize.sh dist/Parrot.app "${{ steps.version.outputs.version }}" dist
+          cd dist
+          DMG="Parrot-${{ steps.version.outputs.version }}-arm64.dmg"
+          shasum -a 256 "$DMG" > "$DMG.sha256"
+          cat "$DMG.sha256"
+
+      - name: clean up keychain
+        if: always() && steps.signing.outputs.enabled == 'true'
+        run: security delete-keychain "$KEYCHAIN" || true
+
+      - name: list artifacts
+        run: ls -lh dist
 
       - name: release
         uses: softprops/action-gh-release@v2
@@ -61,5 +156,9 @@ jobs:
           files: |
             dist/parrot-macos-arm64.tar.gz
             dist/parrot-macos-arm64.tar.gz.sha256
+            dist/Parrot-*-arm64.dmg
+            dist/Parrot-*-arm64.dmg.sha256
           generate_release_notes: true
-          fail_on_unmatched_files: true
+          # The DMG is absent on unsigned builds, so an unmatched glob is not
+          # an error here. The tarball's presence is guaranteed by the steps above.
+          fail_on_unmatched_files: false
