@@ -263,6 +263,34 @@ parrot/
 
 Build: `swift build -c release`. Resulting binary at `.build/release/parrot`. Install: copy to `~/.local/bin/` or `/usr/local/bin/`.
 
+## Packaging
+
+`.github/workflows/release.yml` runs on a `v*` tag and produces two artifacts from one binary:
+
+| Artifact | Channel | Identity |
+| --- | --- | --- |
+| `parrot-macos-arm64.tar.gz` | `curl \| sh`, `brew install by32/tap/parrot` | unsigned; ad-hoc cdhash |
+| `Parrot-<version>-arm64.dmg` | `brew install --cask by32/tap/parrot`, direct download | Developer ID, notarized, stapled |
+
+The scripts are independently runnable so packaging can be debugged without pushing a tag:
+
+- `scripts/verify-binary.sh` — asserts the build is arm64 and actually links `FoundationModels`. `LocalRefiner` sits behind `#if canImport(FoundationModels)`, so building against a pre-macOS-26 SDK silently compiles it away and `--refine local` fails at runtime. This turns that into a build failure.
+- `scripts/bundle-app.sh` — assembles `Parrot.app` from `packaging/Info.plist`, and cross-checks that the binary's `--version` matches the version being stamped in.
+- `scripts/sign-notarize.sh` — signs with Hardened Runtime, notarizes, staples, and builds the DMG. Auto-discovers a `Developer ID Application` identity, and refuses to proceed with an Apple Distribution or Apple Development cert since Gatekeeper rejects those for direct distribution.
+
+Signing is conditional on the `MACOS_CERT_P12` secret. Without it the workflow still publishes the unsigned tarball, so the CLI channel never depends on certificate availability.
+
+### Why a bundle exists at all
+
+Parrot is a single binary, so an `.app` is pure overhead except for one thing: TCC. macOS keys an Accessibility grant to the requesting process's code-signing identity, which for an unsigned binary degrades to its cdhash. Upgrading changes the hash, silently invalidating the grant while leaving the checkbox ticked — the daemon runs, the event tap installs, and no keystrokes arrive.
+
+A Developer ID signature gives a stable identity across versions, so the grant persists. `LoginItem.mechanism` picks `SMAppService` over the LaunchAgent plist when running inside the bundle, because a plist that execs the bundle's inner binary would start it as a bare process and forfeit that identity.
+
+Two entries in `packaging/` are load-bearing and easy to mistake for boilerplate:
+
+- `NSMicrophoneUsageDescription` in `Info.plist` — a bundled app that requests the microphone without it is terminated rather than prompted.
+- `com.apple.security.device.audio-input` in `parrot.entitlements` — Hardened Runtime, which notarization requires, denies microphone access without it even though the app is not sandboxed.
+
 ### On Swift "modules"
 
 Swift's module unit is the **SPM target** (one target = one module = one `import` namespace). For parrot v1 we use a single executable target with the folder structure above; everything is in the same module so no `import` statements between files. If we ever want enforced boundaries (e.g. `Transcription` and `UI` shouldn't reach into `Audio` internals), we promote folders to separate targets in `Package.swift` — a structural change, not a semantic one.
@@ -272,4 +300,5 @@ Swift's module unit is the **SPM target** (one target = one module = one `import
 - **Parakeet via FluidAudio vs. direct CoreML?** FluidAudio is faster to integrate but adds a dependency. Decide once we benchmark both.
 - **Hotkey conflicts.** Right-Option is unused on most keyboards but some users remap it. Print a clear error if `CGEventTap` registration fails.
 - **First-run UX.** Bundle `whisper-base.en` so `parrot` works out of the box, or always require an explicit download? Probably the latter — keeps the binary small and the model directory clean.
-- **Code signing.** A self-built unsigned binary works fine locally but accessibility permission persistence is more reliable for signed binaries. Decide if we sign for personal distribution.
+- **App icon.** `packaging/Parrot.icns` is picked up if present; there is none yet, so the bundle shows the generic app icon.
+- **License.** There is no `LICENSE` file, which blocks Homebrew core submission and leaves redistribution terms unstated.

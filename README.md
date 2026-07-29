@@ -4,15 +4,46 @@ A minimal macOS dictation daemon. Push-to-talk, on-device transcription, text in
 
 ## Install
 
+**Requires:** macOS 14+ on Apple Silicon (M1 or newer). Transcription runs on the Apple Neural Engine via CoreML, so the installers refuse to run on Intel.
+
+### App (recommended)
+
+```sh
+brew install --cask by32/tap/parrot
+```
+
+Or grab `Parrot-<version>-arm64.dmg` from [Releases](https://github.com/by32/parroting/releases) and drag it to Applications.
+
+This is the signed and notarized `Parrot.app`. Prefer it, because **its Accessibility permission survives upgrades** — see [why](#why-the-app-bundle) below. It also puts `parrot` on your `PATH` and registers the login item through System Settings › General › Login Items.
+
+### CLI only
+
+```sh
+brew install by32/tap/parrot
+```
+
+Or without Homebrew:
+
 ```sh
 curl -fsSL https://by32.github.io/parroting/install.sh | sh
+```
+
+Either one drops a bare `parrot` binary on your `PATH`. Lighter, but you re-grant Accessibility on every upgrade.
+
+### Then, once
+
+```sh
 parrot setup                       # grants mic + accessibility, downloads the model
 parrot install --launch-at-login   # optional — runs in the background on login
 ```
 
-**Requires:** macOS 14+ on Apple Silicon (M1 or newer). Transcription runs on the Apple Neural Engine via CoreML — so the installer refuses to run on Intel.
+### Why the app bundle
 
-The installer drops the binary in `/usr/local/bin/parrot`. Builds are unsigned for now, so the installer strips the quarantine xattr — once you've inspected the script you'll see exactly what it does.
+macOS ties an Accessibility grant to the *code-signing identity* of whatever asked for it. A bare unsigned binary has no stable identity, so the grant is keyed to a hash of the binary itself: install a new version, the hash changes, and the grant silently stops applying. Dictation just stops working, with the checkbox still ticked in System Settings.
+
+`Parrot.app` is signed with a Developer ID, so its identity is the same across versions and the grant carries over. `parrot install --launch-at-login` detects the bundle and registers via `SMAppService` to keep that identity, instead of the LaunchAgent plist it uses for bare-binary installs.
+
+If you run `parrot` directly in a terminal, the grant attaches to your *terminal* rather than to parrot, so switching terminal apps means granting again. That is macOS working as intended, not a bug in parrot.
 
 ## How to use
 
@@ -30,8 +61,9 @@ That's it. There is no record button, no stop button, no "send" — `fn` is the 
 ```sh
 parrot                                 # run in the foreground (^C to quit)
 parrot setup                           # one-time setup: permissions + model download
-parrot install --launch-at-login       # register a LaunchAgent (background daemon)
-parrot install --uninstall             # remove the LaunchAgent
+parrot install --launch-at-login       # start at login (background daemon)
+parrot install --uninstall             # stop starting at login
+parrot --version                       # print the installed version
 parrot doctor                          # check permissions + fn key setting
 parrot models list                     # list available models
 parrot models download <id>            # pre-download a model
