@@ -1,20 +1,22 @@
 import ArgumentParser
 import Foundation
+import ServiceManagement
 
-/// Manage parrot's LaunchAgent so the daemon starts at login.
+/// Register parrot to start at login.
 ///
-/// We deliberately do NOT use SMAppService.mainApp here — that requires a full
-/// .app bundle. Since parrot ships as a single binary in /usr/local/bin, a
-/// plain LaunchAgent plist is the simpler, more honest mechanism.
+/// Two mechanisms, chosen by how parrot was installed (see `LoginItem`):
+/// `SMAppService` when running from `Parrot.app`, a LaunchAgent plist when
+/// running as a bare binary. Installing either one clears the other, since two
+/// live daemons would both install a hotkey tap and race to inject text.
 struct Install: ParsableCommand {
     static let configuration = CommandConfiguration(
-        abstract: "Install or remove the launch-at-login LaunchAgent."
+        abstract: "Install or remove the launch-at-login entry."
     )
 
     @Flag(name: .long, help: "Register parrot to start at login.")
     var launchAtLogin: Bool = false
 
-    @Flag(name: .long, help: "Remove the launch-at-login agent.")
+    @Flag(name: .long, help: "Remove the launch-at-login entry.")
     var uninstall: Bool = false
 
     func run() throws {
@@ -25,10 +27,68 @@ struct Install: ParsableCommand {
             throw ExitCode(64)
         }
 
-        if uninstall {
-            try removeAgent()
-        } else {
+        switch (LoginItem.current(), uninstall) {
+        case (.appBundle, false):
+            try registerBundleLoginItem()
+        case (.appBundle, true):
+            try unregisterBundleLoginItem()
+        case (.launchAgent, false):
             try writeAgent()
+        case (.launchAgent, true):
+            try removeAgent()
+        }
+    }
+
+    // MARK: - app bundle (SMAppService)
+
+    private func registerBundleLoginItem() throws {
+        // A leftover LaunchAgent from a previous CLI install would start a
+        // second daemon alongside this one.
+        removeAgent(quiet: true)
+        removeLegacyAgents()
+
+        let service = SMAppService.mainApp
+        do {
+            try service.register()
+        } catch {
+            // Already-registered is not a failure worth aborting on; anything
+            // else is.
+            guard service.status == .enabled else {
+                FileHandle.standardError.write(Data(
+                    "couldn't register the login item: \(error.localizedDescription)\n".utf8
+                ))
+                throw ExitCode(1)
+            }
+        }
+
+        print("✓ launch-at-login installed")
+        print("  mechanism: SMAppService (\(Bundle.main.bundlePath))")
+
+        if service.status == .requiresApproval {
+            print()
+            print("  macOS needs you to approve it:")
+            print("    System Settings › General › Login Items › Allow in the Background")
+            SMAppService.openSystemSettingsLoginItems()
+        }
+    }
+
+    private func unregisterBundleLoginItem() throws {
+        removeAgent(quiet: true)
+        removeLegacyAgents()
+
+        let service = SMAppService.mainApp
+        guard service.status != .notRegistered else {
+            print("nothing to remove (login item is not registered)")
+            return
+        }
+        do {
+            try service.unregister()
+            print("✓ launch-at-login removed")
+        } catch {
+            FileHandle.standardError.write(Data(
+                "couldn't unregister the login item: \(error.localizedDescription)\n".utf8
+            ))
+            throw ExitCode(1)
         }
     }
 
@@ -92,15 +152,21 @@ struct Install: ParsableCommand {
 
     private func removeAgent() throws {
         let removedLegacy = removeLegacyAgents()
-
-        let url = plistURL
-        if FileManager.default.fileExists(atPath: url.path) {
-            _ = runLaunchctl(["bootout", "gui/\(uid())", url.path])
-            try FileManager.default.removeItem(at: url)
-            print("✓ launch-at-login removed")
-        } else if !removedLegacy {
-            print("nothing to remove (no agent at \(url.path))")
+        let removed = removeAgent(quiet: false)
+        if !removed, !removedLegacy {
+            print("nothing to remove (no agent at \(plistURL.path))")
         }
+    }
+
+    /// Boots out and deletes this fork's LaunchAgent. Returns whether it existed.
+    @discardableResult
+    private func removeAgent(quiet: Bool) -> Bool {
+        let url = plistURL
+        guard FileManager.default.fileExists(atPath: url.path) else { return false }
+        _ = runLaunchctl(["bootout", "gui/\(uid())", url.path])
+        try? FileManager.default.removeItem(at: url)
+        print(quiet ? "✓ removed the bare-binary LaunchAgent" : "✓ launch-at-login removed")
+        return true
     }
 
     /// Boots out and deletes agents from earlier label schemes. Returns whether
