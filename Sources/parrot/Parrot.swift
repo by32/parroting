@@ -49,6 +49,15 @@ struct Run: ParsableCommand {
     )
     var language: String?
 
+    @Option(
+        name: .long,
+        help: ArgumentHelp(
+            "Mic sensitivity: \(CaptureGate.Sensitivity.allValueStrings.joined(separator: ", "))."
+                + " Use high to dictate while whispering. (default: normal)"
+        )
+    )
+    var sensitivity: CaptureGate.Sensitivity?
+
     func run() throws {
         let config: Config
         do {
@@ -60,6 +69,7 @@ struct Run: ParsableCommand {
 
         let hotkey = self.hotkey ?? config.hotkey ?? .fn
         let showOverlay = self.overlay ?? config.overlay ?? true
+        let sensitivity = self.sensitivity ?? config.sensitivity ?? .normal
 
         let language: LanguageSetting
         if let raw = self.language {
@@ -173,7 +183,11 @@ struct Run: ParsableCommand {
                             FileHandle.standardError.write(Data("  wav write failed: \(error)\n".utf8))
                         }
                     }
-                    let verdict = CaptureGate.evaluate(sampleCount: samples.count, rms: rms)
+                    let verdict = CaptureGate.evaluate(
+                        sampleCount: samples.count,
+                        rms: rms,
+                        sensitivity: sensitivity
+                    )
                     if let reason = verdict.rejectionReason {
                         FileHandle.standardError.write(Data("  skipped · \(reason)\n".utf8))
                         MainActor.assumeIsolated {

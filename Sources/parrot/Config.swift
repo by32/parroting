@@ -9,13 +9,14 @@ struct Config: Equatable {
     var model: String?
     var hotkey: Hotkey?
     var language: LanguageSetting?
+    var sensitivity: CaptureGate.Sensitivity?
     var overlay: Bool?
 
     static let empty = Config()
 
     /// Single source of truth for the schema, so the "unknown key" message
     /// cannot drift out of sync with what `parse` actually accepts.
-    static let validKeys = ["model", "hotkey", "language", "overlay"]
+    static let validKeys = ["model", "hotkey", "language", "sensitivity", "overlay"]
 
     static var defaultURL: URL {
         FileManager.default.homeDirectoryForCurrentUser
@@ -79,6 +80,16 @@ struct Config: Equatable {
                     )
                 }
                 config.language = parsed
+            case "sensitivity":
+                let name = try string(value, key: key, at: at)
+                guard let parsed = CaptureGate.Sensitivity(rawValue: name) else {
+                    throw ConfigError.syntax(
+                        at,
+                        "unknown sensitivity \"\(name)\"; expected one of "
+                            + CaptureGate.Sensitivity.allValueStrings.joined(separator: ", ")
+                    )
+                }
+                config.sensitivity = parsed
             case "overlay":
                 config.overlay = try bool(value, key: key, at: at)
             default:

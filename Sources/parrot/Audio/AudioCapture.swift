@@ -1,4 +1,5 @@
 import AVFoundation
+import ArgumentParser
 import Foundation
 
 /// Captures microphone audio while recording is active and returns a 16 kHz
@@ -188,7 +189,24 @@ enum WAVWriter {
 /// and from clips too short to hold a word, so those are dropped instead.
 enum CaptureGate {
     static let minSeconds: Double = 0.2
-    static let minRMS: Float = 0.004
+
+    /// How quiet a capture may be before it is treated as silence. `high` exists
+    /// for whispering in a shared space, where speech legitimately sits close to
+    /// the room-noise floor — at the cost of occasionally letting silence
+    /// through to the model.
+    enum Sensitivity: String, CaseIterable, ExpressibleByArgument, Equatable {
+        case normal
+        case high
+
+        var minRMS: Float {
+            switch self {
+            case .normal: return 0.004
+            case .high: return 0.001
+            }
+        }
+
+        static var allValueStrings: [String] { allCases.map(\.rawValue) }
+    }
 
     enum Verdict: Equatable {
         case transcribe
@@ -209,12 +227,13 @@ enum CaptureGate {
     static func evaluate(
         sampleCount: Int,
         rms: Float,
+        sensitivity: Sensitivity = .normal,
         sampleRate: Double = AudioCapture.targetSampleRate
     ) -> Verdict {
         guard sampleCount > 0 else { return .empty }
         let seconds = Double(sampleCount) / sampleRate
         if seconds < minSeconds { return .tooShort(seconds: seconds) }
-        if rms < minRMS { return .tooQuiet(rms: rms) }
+        if rms < sensitivity.minRMS { return .tooQuiet(rms: rms) }
         return .transcribe
     }
 }

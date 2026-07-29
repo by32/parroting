@@ -44,9 +44,62 @@ final class CaptureGateTests: XCTestCase {
 
         let atMinLevel = CaptureGate.evaluate(
             sampleCount: samples(seconds: 1),
-            rms: CaptureGate.minRMS
+            rms: CaptureGate.Sensitivity.normal.minRMS
         )
         XCTAssertEqual(atMinLevel, .transcribe)
+    }
+
+    // MARK: - Sensitivity
+
+    func testHighSensitivityAcceptsWhisperQuietSpeech() {
+        // A level that normal treats as silence, which is what makes whispered
+        // dictation impossible at the default threshold.
+        let whisper: Float = 0.002
+        XCTAssertEqual(
+            CaptureGate.evaluate(sampleCount: samples(seconds: 2), rms: whisper),
+            .tooQuiet(rms: whisper)
+        )
+        XCTAssertEqual(
+            CaptureGate.evaluate(
+                sampleCount: samples(seconds: 2),
+                rms: whisper,
+                sensitivity: .high
+            ),
+            .transcribe
+        )
+    }
+
+    func testHighSensitivityStillRejectsTrueSilence() {
+        XCTAssertEqual(
+            CaptureGate.evaluate(sampleCount: samples(seconds: 2), rms: 0, sensitivity: .high),
+            .tooQuiet(rms: 0)
+        )
+    }
+
+    func testHighSensitivityStillEnforcesMinimumDuration() {
+        XCTAssertEqual(
+            CaptureGate.evaluate(
+                sampleCount: samples(seconds: 0.05),
+                rms: 0.9,
+                sensitivity: .high
+            ),
+            .tooShort(seconds: 0.05)
+        )
+    }
+
+    func testHighThresholdIsLowerThanNormal() {
+        XCTAssertLessThan(
+            CaptureGate.Sensitivity.high.minRMS,
+            CaptureGate.Sensitivity.normal.minRMS
+        )
+    }
+
+    func testSensitivityParsesFromItsAdvertisedNames() {
+        XCTAssertEqual(CaptureGate.Sensitivity.allValueStrings, ["normal", "high"])
+        for name in CaptureGate.Sensitivity.allValueStrings {
+            XCTAssertNotNil(CaptureGate.Sensitivity(rawValue: name))
+        }
+        XCTAssertNil(CaptureGate.Sensitivity(rawValue: "maximum"))
     }
 
     func testRejectionReasonsAreHumanReadable() {

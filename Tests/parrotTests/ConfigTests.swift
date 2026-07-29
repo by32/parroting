@@ -39,6 +39,15 @@ final class ConfigTests: XCTestCase {
         assertSyntaxError(#"language = "klingon""#, containing: "unknown language")
     }
 
+    func testParsesSensitivity() throws {
+        XCTAssertEqual(try Config.parse(#"sensitivity = "high""#).sensitivity, .high)
+        XCTAssertEqual(try Config.parse(#"sensitivity = "normal""#).sensitivity, .normal)
+    }
+
+    func testRejectsUnknownSensitivity() {
+        assertSyntaxError(#"sensitivity = "loud""#, containing: "unknown sensitivity")
+    }
+
     func testIgnoresCommentsAndSurroundingWhitespace() throws {
         let config = try Config.parse(
             """
