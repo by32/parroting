@@ -12,11 +12,8 @@
 ## Non-goals
 
 - Cross-platform (macOS only)
-- Menubar, dock icon, settings window, preferences UI
 - Cloud transcription providers
-- AI post-processing, summarization, agents
 - Speaker diarization, meeting recording, semantic search
-- Auto-launch at login (user wires this themselves with `launchd` if desired)
 
 ## Why Swift
 
@@ -152,16 +149,24 @@ On first selection (or via `parrot models download <id>`), downloads to `~/Libra
 
 ### `Config`
 
-Plain `Codable` struct. Loaded from (in order): CLI flags > `~/.config/parrot/config.toml` > defaults.
+Flat TOML parser (`FlatTOML`) handles `key = value` lines with quoted keys.
+Loaded from (in order): CLI flags > `~/.config/parrot/config.toml` > defaults.
 
 ```toml
 model = "whisper-large-v3-turbo"
 hotkey = "fn"
-inject_mode = "paste"   # or "type-unicode"
-overlay = true          # show recording pill at bottom of screen
+language = "auto"
+sensitivity = "normal"
+overlay = true
+refine = "off"           # off, local, cloud
+refine-style = "formal"
 ```
 
-CLI flags override the file. No settings UI; you edit the TOML.
+The menu bar settings dropdown writes back to this file via `Config.toTOML()` +
+`Config.write()`. A `ConfigWatcher` reopens the file descriptor after each
+event (atomic writes replace the inode) and calls `Daemon.applyConfig` to
+apply changes live — sensitivity, refine mode, refine style, and styles
+update without restart. Hotkey, model, and language changes require restart.
 
 ## Permissions
 
@@ -215,10 +220,7 @@ End-to-end latency target: <500 ms after hotkey release for utterances under 10 
 - No streaming partial transcripts in v1. Press, speak, release, get full text.
 - No VAD-based hands-free mode. Push-to-talk is more reliable and uses zero idle CPU.
 - No history, transcript log, or clipboard manager. Output goes to the cursor and that's it.
-- No custom vocabulary, prompts, or post-processing.
-- No menubar, no settings window, no preferences panel. The only UI is the recording overlay. Configuration is flags + TOML.
-
-These are deliberate cuts. Each can be revisited if real usage demands it.
+- No speaker diarization, meeting recording, or semantic search.
 
 ## Project layout (planned)
 
