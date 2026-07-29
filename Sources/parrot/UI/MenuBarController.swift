@@ -11,6 +11,13 @@ final class MenuBarController {
     private let modelID: String
     private let idleTitle: String
 
+    private var refineItems: [NSMenuItem] = []
+    private var sensitivityItems: [NSMenuItem] = []
+    private var refineStyleItems: [NSMenuItem] = []
+
+    /// Called with (key, value) when the user picks a setting from the menu.
+    var onSettingChange: ((String, String) -> Void)?
+
     init(modelID: String, hotkeyName: String = "fn") {
         self.modelID = modelID
         self.idleTitle = "idle · hold \(hotkeyName) to dictate"
@@ -26,6 +33,10 @@ final class MenuBarController {
         modelLabel = NSMenuItem(title: "model: \(modelID)", action: nil, keyEquivalent: "")
         modelLabel.isEnabled = false
         menu.addItem(modelLabel)
+
+        menu.addItem(.separator())
+
+        menu.addItem(buildSettingsMenu())
 
         menu.addItem(.separator())
 
@@ -47,6 +58,123 @@ final class MenuBarController {
 
     func setTranscribing() {
         stateLabel.title = "transcribing…"
+    }
+
+    /// Updates checkmarks to reflect the current settings. Called by the daemon
+    /// when settings change (from the file watcher or from the menu itself).
+    func updateSettings(
+        refineMode: RefineMode,
+        sensitivity: CaptureGate.Sensitivity,
+        refineStyle: String?
+    ) {
+        markSelected(in: refineItems, matching: refineMode.rawValue)
+        markSelected(in: sensitivityItems, matching: sensitivity.rawValue)
+        markSelected(in: refineStyleItems, matching: refineStyle ?? "")
+    }
+
+    // MARK: - Settings menu
+
+    private func buildSettingsMenu() -> NSMenuItem {
+        let settingsItem = NSMenuItem(title: "Settings", action: nil, keyEquivalent: "")
+        let submenu = NSMenu()
+        submenu.autoenablesItems = false
+
+        submenu.addItem(buildRefineSubmenu())
+        submenu.addItem(buildSensitivitySubmenu())
+        submenu.addItem(buildRefineStyleSubmenu())
+
+        settingsItem.submenu = submenu
+        return settingsItem
+    }
+
+    private func buildRefineSubmenu() -> NSMenuItem {
+        let parent = NSMenuItem(title: "Refine", action: nil, keyEquivalent: "")
+        let sub = NSMenu()
+        sub.autoenablesItems = false
+
+        for mode in RefineMode.allCases {
+            let item = NSMenuItem(
+                title: mode.rawValue.capitalized,
+                action: #selector(refineModeSelected),
+                keyEquivalent: ""
+            )
+            item.target = self
+            item.representedObject = mode.rawValue
+            sub.addItem(item)
+            refineItems.append(item)
+        }
+
+        parent.submenu = sub
+        return parent
+    }
+
+    private func buildSensitivitySubmenu() -> NSMenuItem {
+        let parent = NSMenuItem(title: "Sensitivity", action: nil, keyEquivalent: "")
+        let sub = NSMenu()
+        sub.autoenablesItems = false
+
+        for level in CaptureGate.Sensitivity.allCases {
+            let item = NSMenuItem(
+                title: level.rawValue.capitalized,
+                action: #selector(sensitivitySelected),
+                keyEquivalent: ""
+            )
+            item.target = self
+            item.representedObject = level.rawValue
+            sub.addItem(item)
+            sensitivityItems.append(item)
+        }
+
+        parent.submenu = sub
+        return parent
+    }
+
+    private func buildRefineStyleSubmenu() -> NSMenuItem {
+        let parent = NSMenuItem(title: "Refine Style", action: nil, keyEquivalent: "")
+        let sub = NSMenu()
+        sub.autoenablesItems = false
+
+        let presets: [(label: String, value: String)] = [
+            ("None", ""),
+            ("Formal", "formal"),
+            ("Casual", "casual"),
+            ("Concise", "concise"),
+            ("Confident", "confident"),
+        ]
+
+        for preset in presets {
+            let item = NSMenuItem(
+                title: preset.label,
+                action: #selector(refineStyleSelected),
+                keyEquivalent: ""
+            )
+            item.target = self
+            item.representedObject = preset.value
+            sub.addItem(item)
+            refineStyleItems.append(item)
+        }
+
+        parent.submenu = sub
+        return parent
+    }
+
+    private func markSelected(in items: [NSMenuItem], matching value: String) {
+        for item in items {
+            let itemValue = item.representedObject as? String ?? ""
+            item.state = itemValue == value ? .on : .off
+        }
+    }
+
+    @objc private func refineModeSelected(_ sender: NSMenuItem) {
+        onSettingChange?("refine", sender.representedObject as? String ?? "off")
+    }
+
+    @objc private func sensitivitySelected(_ sender: NSMenuItem) {
+        onSettingChange?("sensitivity", sender.representedObject as? String ?? "normal")
+    }
+
+    @objc private func refineStyleSelected(_ sender: NSMenuItem) {
+        onSettingChange?("refine-style", sender.representedObject as? String ?? "")
     }
 
     private func configureButton() {

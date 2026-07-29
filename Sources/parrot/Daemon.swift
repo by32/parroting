@@ -74,6 +74,20 @@ final class Daemon {
         let transcriber = self.transcriber
         let dumpWav = self.dumpWav
 
+        menuBar.onSettingChange = { [weak self] key, value in
+            guard let self else { return }
+            do {
+                try self.updateConfig(key: key, value: value)
+            } catch {
+                FileHandle.standardError.write(Data("config write failed: \(error)\n".utf8))
+            }
+        }
+        menuBar.updateSettings(
+            refineMode: refineMode,
+            sensitivity: sensitivity,
+            refineStyle: refineStyle
+        )
+
         do {
             try monitor.start { [weak self] event in
                 guard let self else { return }
@@ -255,6 +269,11 @@ final class Daemon {
         }
 
         currentConfig = config
+        menuBar.updateSettings(
+            refineMode: refineMode,
+            sensitivity: sensitivity,
+            refineStyle: refineStyle
+        )
     }
 
     /// Updates a single config key, applies it live, and writes the config back
