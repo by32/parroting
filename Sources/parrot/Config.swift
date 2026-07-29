@@ -8,9 +8,14 @@ import Foundation
 struct Config: Equatable {
     var model: String?
     var hotkey: Hotkey?
+    var language: LanguageSetting?
     var overlay: Bool?
 
     static let empty = Config()
+
+    /// Single source of truth for the schema, so the "unknown key" message
+    /// cannot drift out of sync with what `parse` actually accepts.
+    static let validKeys = ["model", "hotkey", "language", "overlay"]
 
     static var defaultURL: URL {
         FileManager.default.homeDirectoryForCurrentUser
@@ -65,12 +70,21 @@ struct Config: Equatable {
                     )
                 }
                 config.hotkey = parsed
+            case "language":
+                let name = try string(value, key: key, at: at)
+                guard let parsed = LanguageSetting(parsing: name) else {
+                    throw ConfigError.syntax(
+                        at,
+                        "unknown language \"\(name)\"; expected auto or a Whisper language code like en, es, fr"
+                    )
+                }
+                config.language = parsed
             case "overlay":
                 config.overlay = try bool(value, key: key, at: at)
             default:
                 throw ConfigError.syntax(
                     at,
-                    "unknown key \"\(key)\"; valid keys are model, hotkey, overlay"
+                    "unknown key \"\(key)\"; valid keys are " + Self.validKeys.joined(separator: ", ")
                 )
             }
         }

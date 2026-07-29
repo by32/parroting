@@ -4,11 +4,17 @@ import WhisperKit
 actor WhisperKitTranscriber: Transcriber {
     let modelID: String
     private let model: TranscriptionModel
+    private var language: LanguageSetting
     private var pipeline: WhisperKit?
 
-    init(model: TranscriptionModel) {
+    init(model: TranscriptionModel, language: LanguageSetting = .default) {
         self.modelID = model.id
         self.model = model
+        self.language = language
+    }
+
+    func setLanguage(_ language: LanguageSetting) {
+        self.language = language
     }
 
     /// Loads the model into memory; downloads first if not already on disk.
@@ -29,9 +35,19 @@ actor WhisperKitTranscriber: Transcriber {
         if pipeline == nil { try await warmUp() }
         guard let pipeline else { throw TranscriberError.notLoaded }
 
-        let results = try await pipeline.transcribe(audioArray: audio)
+        let results = try await pipeline.transcribe(
+            audioArray: audio,
+            decodeOptions: decodeOptions()
+        )
         let raw = results.map(\.text).joined(separator: " ")
         return Self.sanitize(raw)
+    }
+
+    private func decodeOptions() -> DecodingOptions {
+        DecodingOptions(
+            language: language.whisperCode,
+            detectLanguage: language.detectLanguage
+        )
     }
 
     /// Strip Whisper's non-speech bracket tokens ([BLANK_AUDIO], [MUSIC],

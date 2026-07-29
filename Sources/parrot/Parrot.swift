@@ -43,6 +43,12 @@ struct Run: ParsableCommand {
     )
     var hotkey: Hotkey?
 
+    @Option(
+        name: .long,
+        help: "Language to transcribe: a Whisper code like en/es/fr, or auto to detect. (default: en)"
+    )
+    var language: String?
+
     func run() throws {
         let config: Config
         do {
@@ -54,6 +60,20 @@ struct Run: ParsableCommand {
 
         let hotkey = self.hotkey ?? config.hotkey ?? .fn
         let showOverlay = self.overlay ?? config.overlay ?? true
+
+        let language: LanguageSetting
+        if let raw = self.language {
+            guard let parsed = LanguageSetting(parsing: raw) else {
+                FileHandle.standardError.write(Data("unknown language: \(raw)\n".utf8))
+                FileHandle.standardError.write(Data(
+                    "expected auto or a Whisper language code like en, es, fr\n".utf8
+                ))
+                throw ExitCode(1)
+            }
+            language = parsed
+        } else {
+            language = config.language ?? .default
+        }
 
         if !skipDoctor {
             let checks = DoctorReport.run(hotkey: hotkey)
@@ -81,7 +101,12 @@ struct Run: ParsableCommand {
             chosenModel = m
         }
 
-        let transcriber = WhisperKitTranscriber(model: chosenModel)
+        if let problem = LanguageCompatibility.problem(language: language, model: chosenModel) {
+            FileHandle.standardError.write(Data("\(problem)\n".utf8))
+            throw ExitCode(1)
+        }
+
+        let transcriber = WhisperKitTranscriber(model: chosenModel, language: language)
         let warmupSemaphore = DispatchSemaphore(value: 0)
         var warmupError: Error?
         Task.detached {
@@ -195,9 +220,9 @@ struct Run: ParsableCommand {
         sigint.resume()
         signal(SIGINT, SIG_IGN)
 
-        FileHandle.standardError.write(Data(
-            "listening on \(hotkey.displayName) hold · model: \(chosenModel.id) · ^C to quit\n".utf8
-        ))
+        let banner = "listening on \(hotkey.displayName) hold · model: \(chosenModel.id)"
+            + " · lang: \(language.displayName) · ^C to quit\n"
+        FileHandle.standardError.write(Data(banner.utf8))
         app.run()
     }
 }

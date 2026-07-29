@@ -26,6 +26,17 @@ final class ConfigTests: XCTestCase {
         XCTAssertEqual(config.hotkey, .fn)
         XCTAssertNil(config.model)
         XCTAssertNil(config.overlay)
+        XCTAssertNil(config.language)
+    }
+
+    func testParsesLanguageAsCodeOrName() throws {
+        XCTAssertEqual(try Config.parse(#"language = "es""#).language, .code("es"))
+        XCTAssertEqual(try Config.parse(#"language = "spanish""#).language, .code("es"))
+        XCTAssertEqual(try Config.parse(#"language = "auto""#).language, .auto)
+    }
+
+    func testRejectsUnknownLanguage() {
+        assertSyntaxError(#"language = "klingon""#, containing: "unknown language")
     }
 
     func testIgnoresCommentsAndSurroundingWhitespace() throws {
@@ -118,7 +129,8 @@ final class ConfigTests: XCTestCase {
         } catch let error as ConfigError {
             XCTAssertEqual(
                 error.description,
-                #"/tmp/config.toml:4: unknown key "bogus"; valid keys are model, hotkey, overlay"#
+                #"/tmp/config.toml:4: unknown key "bogus"; valid keys are "#
+                    + Config.validKeys.joined(separator: ", ")
             )
         } catch {
             XCTFail("unexpected error: \(error)")
