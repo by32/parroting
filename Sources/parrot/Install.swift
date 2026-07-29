@@ -34,17 +34,24 @@ struct Install: ParsableCommand {
 
     // MARK: -
 
-    private static let label = "com.digimata.parrot"
+    static let label = "io.github.by32.parroting"
 
-    private var plistURL: URL {
-        let home = FileManager.default.homeDirectoryForCurrentUser
-        return home
+    /// Labels this fork used to ship under. Removed on install so a user who
+    /// upgrades from an older build does not end up with two agents both
+    /// holding the hotkey tap.
+    private static let legacyLabels = ["com.digimata.parrot"]
+
+    private var plistURL: URL { Self.plistURL(for: Self.label) }
+
+    private static func plistURL(for label: String) -> URL {
+        FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/LaunchAgents", isDirectory: true)
-            .appendingPathComponent("\(Self.label).plist")
+            .appendingPathComponent("\(label).plist")
     }
 
     private func writeAgent() throws {
         let binary = try resolveBinaryPath()
+        removeLegacyAgents()
 
         let plist: [String: Any] = [
             "Label": Self.label,
@@ -84,14 +91,32 @@ struct Install: ParsableCommand {
     }
 
     private func removeAgent() throws {
+        let removedLegacy = removeLegacyAgents()
+
         let url = plistURL
         if FileManager.default.fileExists(atPath: url.path) {
             _ = runLaunchctl(["bootout", "gui/\(uid())", url.path])
             try FileManager.default.removeItem(at: url)
             print("✓ launch-at-login removed")
-        } else {
+        } else if !removedLegacy {
             print("nothing to remove (no agent at \(url.path))")
         }
+    }
+
+    /// Boots out and deletes agents from earlier label schemes. Returns whether
+    /// anything was actually removed.
+    @discardableResult
+    private func removeLegacyAgents() -> Bool {
+        var removed = false
+        for label in Self.legacyLabels {
+            let url = Self.plistURL(for: label)
+            guard FileManager.default.fileExists(atPath: url.path) else { continue }
+            _ = runLaunchctl(["bootout", "gui/\(uid())", url.path])
+            try? FileManager.default.removeItem(at: url)
+            print("✓ removed legacy agent \(label)")
+            removed = true
+        }
+        return removed
     }
 
     private func resolveBinaryPath() throws -> String {

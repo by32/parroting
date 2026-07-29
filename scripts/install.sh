@@ -1,17 +1,21 @@
 #!/usr/bin/env bash
 # parrot installer.
-#   curl -fsSL https://digimata.github.io/parrot/install.sh | sh
+#   curl -fsSL https://by32.github.io/parroting/install.sh | sh
 #
 # Fetches the latest arm64 macOS binary from GitHub Releases, drops it
 # in /usr/local/bin, and strips the quarantine xattr so Gatekeeper doesn't
-# block the unsigned binary.
+# block the binary if it happens to be quarantined.
+#
+# This installs the bare CLI. For the signed app bundle (whose Accessibility
+# permission survives upgrades) install the DMG or the Homebrew cask instead:
+#   brew install --cask by32/tap/parrot
 #
 # Apple Silicon only — WhisperKit uses the Apple Neural Engine via CoreML,
 # which only ships on M-series chips.
 
 set -euo pipefail
 
-REPO="digimata/parrot"
+REPO="by32/parroting"
 BIN_NAME="parrot"
 INSTALL_DIR="/usr/local/bin"
 ASSET="parrot-macos-arm64.tar.gz"

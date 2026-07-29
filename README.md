@@ -5,7 +5,7 @@ A minimal macOS dictation daemon. Push-to-talk, on-device transcription, text in
 ## Install
 
 ```sh
-curl -fsSL https://digimata.github.io/parrot/install.sh | sh
+curl -fsSL https://by32.github.io/parroting/install.sh | sh
 parrot setup                       # grants mic + accessibility, downloads the model
 parrot install --launch-at-login   # optional — runs in the background on login
 ```
