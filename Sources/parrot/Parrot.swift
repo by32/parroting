@@ -116,7 +116,25 @@ struct Run: ParsableCommand {
             throw ExitCode(1)
         }
 
-        let transcriber = WhisperKitTranscriber(model: chosenModel, language: language)
+        let dictionary: UserDictionary
+        do {
+            dictionary = try UserDictionary.load()
+        } catch {
+            FileHandle.standardError.write(Data("dictionary error: \(error)\n".utf8))
+            throw ExitCode(1)
+        }
+        if !dictionary.isEmpty {
+            FileHandle.standardError.write(Data(
+                "dictionary: \(dictionary.terms.count) terms, \(dictionary.corrections.count) corrections\n".utf8
+            ))
+        }
+        let processor = TranscriptProcessor(dictionary: dictionary)
+
+        let transcriber = WhisperKitTranscriber(
+            model: chosenModel,
+            language: language,
+            biasTerms: dictionary.terms
+        )
         let warmupSemaphore = DispatchSemaphore(value: 0)
         var warmupError: Error?
         Task.detached {
@@ -199,7 +217,8 @@ struct Run: ParsableCommand {
                     Task {
                         let started = Date()
                         do {
-                            let text = try await transcriber.transcribe(samples)
+                            let raw = try await transcriber.transcribe(samples)
+                            let text = processor.process(raw)
                             let elapsed = Date().timeIntervalSince(started)
                             FileHandle.standardError.write(Data(
                                 String(format: "→ %.2fs · %@\n", elapsed, text).utf8
