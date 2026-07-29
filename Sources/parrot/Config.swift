@@ -11,12 +11,17 @@ struct Config: Equatable {
     var language: LanguageSetting?
     var sensitivity: CaptureGate.Sensitivity?
     var overlay: Bool?
+    var refine: RefineMode?
+    var refineStyle: String?
 
     static let empty = Config()
 
     /// Single source of truth for the schema, so the "unknown key" message
     /// cannot drift out of sync with what `parse` actually accepts.
-    static let validKeys = ["model", "hotkey", "language", "sensitivity", "overlay"]
+    static let validKeys = [
+        "model", "hotkey", "language", "sensitivity", "overlay",
+        "refine", "refine-style",
+    ]
 
     static var directoryURL: URL {
         FileManager.default.homeDirectoryForCurrentUser
@@ -79,6 +84,20 @@ struct Config: Equatable {
 
             case "overlay":
                 config.overlay = try pair.boolValue()
+
+            case "refine":
+                let name = try pair.stringValue()
+                guard let parsed = RefineMode(rawValue: name) else {
+                    throw ConfigError.syntax(
+                        pair.at,
+                        "unknown refine mode \"\(name)\"; expected one of "
+                            + RefineMode.allValueStrings.joined(separator: ", ")
+                    )
+                }
+                config.refine = parsed
+
+            case "refine-style":
+                config.refineStyle = try pair.stringValue()
 
             default:
                 throw ConfigError.syntax(

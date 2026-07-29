@@ -58,6 +58,22 @@ struct Run: ParsableCommand {
     )
     var sensitivity: CaptureGate.Sensitivity?
 
+    @Option(
+        name: .long,
+        help: """
+        Post-transcription cleanup: \(RefineMode.allValueStrings.joined(separator: ", ")). \
+        Local uses the on-device model; cloud sends text to an OpenAI-compatible endpoint. \
+        (default: off)
+        """
+    )
+    var refine: RefineMode?
+
+    @Option(
+        name: .long,
+        help: "Tone instruction for the refiner, e.g. formal, casual, concise."
+    )
+    var refineStyle: String?
+
     func run() throws {
         let config: Config
         do {
@@ -141,6 +157,20 @@ struct Run: ParsableCommand {
         }
 
         let processor = TranscriptProcessor(snippets: snippets, dictionary: dictionary)
+
+        let refineMode = self.refine ?? config.refine ?? .off
+        let effectiveRefineStyle = self.refineStyle ?? config.refineStyle
+
+        let refiner: (any Refiner)?
+        do {
+            refiner = try makeRefiner(mode: refineMode)
+        } catch {
+            FileHandle.standardError.write(Data("refine error: \(error)\n".utf8))
+            throw ExitCode(1)
+        }
+        if refiner != nil {
+            FileHandle.standardError.write(Data("refine: \(refineMode.rawValue)\n".utf8))
+        }
 
         let transcriber = WhisperKitTranscriber(
             model: chosenModel,
@@ -230,13 +260,26 @@ struct Run: ParsableCommand {
                         let started = Date()
                         do {
                             let raw = try await transcriber.transcribe(samples)
-                            let text = processor.process(raw)
+                            var text = processor.process(raw)
+
+                            if let refiner, !text.isEmpty {
+                                do {
+                                    let refined = try await refiner.refine(text, style: effectiveRefineStyle)
+                                    if !refined.isEmpty { text = refined }
+                                } catch {
+                                    FileHandle.standardError.write(Data(
+                                        "refine failed: \(error) — using raw transcript\n".utf8
+                                    ))
+                                }
+                            }
+
                             let elapsed = Date().timeIntervalSince(started)
                             FileHandle.standardError.write(Data(
                                 String(format: "→ %.2fs · %@\n", elapsed, text).utf8
                             ))
+                            let final = text
                             await MainActor.run {
-                                TextInjector.inject(text)
+                                TextInjector.inject(final)
                                 overlay?.hide()
                                 menuBar.setRecording(false)
                             }
@@ -266,7 +309,7 @@ struct Run: ParsableCommand {
         signal(SIGINT, SIG_IGN)
 
         let banner = "listening on \(hotkey.displayName) hold · model: \(chosenModel.id)"
-            + " · lang: \(language.displayName) · ^C to quit\n"
+            + " · lang: \(language.displayName) · refine: \(refineMode.rawValue) · ^C to quit\n"
         FileHandle.standardError.write(Data(banner.utf8))
         app.run()
     }
