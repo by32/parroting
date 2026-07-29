@@ -128,7 +128,19 @@ struct Run: ParsableCommand {
                 "dictionary: \(dictionary.terms.count) terms, \(dictionary.corrections.count) corrections\n".utf8
             ))
         }
-        let processor = TranscriptProcessor(dictionary: dictionary)
+
+        let snippets: Snippets
+        do {
+            snippets = try Snippets.load()
+        } catch {
+            FileHandle.standardError.write(Data("snippets error: \(error)\n".utf8))
+            throw ExitCode(1)
+        }
+        if !snippets.isEmpty {
+            FileHandle.standardError.write(Data("snippets: \(snippets.count) cues\n".utf8))
+        }
+
+        let processor = TranscriptProcessor(snippets: snippets, dictionary: dictionary)
 
         let transcriber = WhisperKitTranscriber(
             model: chosenModel,
