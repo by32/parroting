@@ -110,4 +110,29 @@ struct Config: Equatable {
 
         return config
     }
+
+    /// Serializes to flat TOML. Only non-nil keys are written, in canonical
+    /// order, so re-writing a config that was loaded with comments produces a
+    /// clean file without them. This is the trade-off of a hand-rolled parser:
+    /// no comment preservation, but also no dependency on a TOML library.
+    func toTOML() -> String {
+        var lines: [String] = []
+        if let model { lines.append("model = \"\(model)\"") }
+        if let hotkey { lines.append("hotkey = \"\(hotkey.rawValue)\"") }
+        if let language { lines.append("language = \"\(language.displayName)\"") }
+        if let sensitivity { lines.append("sensitivity = \"\(sensitivity.rawValue)\"") }
+        if let overlay { lines.append("overlay = \(overlay)") }
+        if let refine { lines.append("refine = \"\(refine.rawValue)\"") }
+        if let refineStyle { lines.append("refine-style = \"\(refineStyle)\"") }
+        return lines.isEmpty ? "" : lines.joined(separator: "\n") + "\n"
+    }
+
+    /// Writes the config to disk, creating the directory if needed.
+    func write(to url: URL = defaultURL) throws {
+        try FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try toTOML().write(to: url, atomically: true, encoding: .utf8)
+    }
 }

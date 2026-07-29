@@ -218,7 +218,8 @@ struct Run: ParsableCommand {
                 showOverlay: showOverlay,
                 debugHotkey: debugHotkey,
                 dumpWav: dumpWav,
-                modelID: chosenModel.id
+                modelID: chosenModel.id,
+                config: config
             )
             try daemon.run()
         }
