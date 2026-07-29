@@ -14,6 +14,8 @@ brew install --cask by32/tap/parrot
 
 Or grab `Parrot-<version>-arm64.dmg` from [Releases](https://github.com/by32/parroting/releases) and drag it to Applications.
 
+> The signed build is not published yet — it needs a Developer ID certificate in the repo's secrets. Until then use the CLI below; the release workflow starts producing the `.app` and DMG automatically once `MACOS_CERT_P12` is set.
+
 This is the signed and notarized `Parrot.app`. Prefer it, because **its Accessibility permission survives upgrades** — see [why](#why-the-app-bundle) below. It also puts `parrot` on your `PATH` and registers the login item through System Settings › General › Login Items.
 
 ### CLI only
