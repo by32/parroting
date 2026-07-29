@@ -16,6 +16,10 @@ jobs:
     runs-on: macos-26
     timeout-minutes: 60
 
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      signed: ${{ steps.signing.outputs.enabled }}
+
     steps:
       - uses: actions/checkout@v4
 
@@ -162,3 +166,91 @@ jobs:
           # The DMG is absent on unsigned builds, so an unmatched glob is not
           # an error here. The tarball's presence is guaranteed by the steps above.
           fail_on_unmatched_files: false
+
+  tap:
+    name: bump homebrew tap
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      # Pushing to another repository needs a PAT; the job's GITHUB_TOKEN is
+      # scoped to this one.
+      - name: detect tap token
+        id: token
+        env:
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          if [ -n "$TAP_TOKEN" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::HOMEBREW_TAP_TOKEN is not set — skipping the Homebrew tap bump."
+          fi
+
+      - name: check out tap
+        if: steps.token.outputs.enabled == 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: by32/homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: tap
+
+      # Hash what was actually published rather than trusting a value handed
+      # over from the build job, so a mangled upload fails here instead of in
+      # somebody's `brew install`.
+      - name: bump formula and cask
+        if: steps.token.outputs.enabled == 'true'
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
+          SIGNED: ${{ needs.build.outputs.signed }}
+          BASE: https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          cd tap
+
+          fetch_sha() {
+            local name="$1"
+            curl -fsSL --retry 3 -o "/tmp/$name" "$BASE/$name"
+            sha256sum "/tmp/$name" | cut -d' ' -f1
+          }
+
+          TARBALL="parrot-macos-arm64.tar.gz"
+          TARBALL_SHA=$(fetch_sha "$TARBALL")
+          echo "$TARBALL -> $TARBALL_SHA"
+
+          sed -i -E \
+            -e "s|^  version \".*\"|  version \"$VERSION\"|" \
+            -e "s|^  url \".*\"|  url \"$BASE/$TARBALL\"|" \
+            -e "s|^  sha256 \".*\"|  sha256 \"$TARBALL_SHA\"|" \
+            Formula/parrot.rb
+
+          if [ "$SIGNED" = "true" ]; then
+            DMG="Parrot-${VERSION}-arm64.dmg"
+            DMG_SHA=$(fetch_sha "$DMG")
+            echo "$DMG -> $DMG_SHA"
+            sed -i -E \
+              -e "s|^  version \".*\"|  version \"$VERSION\"|" \
+              -e "s|^  sha256 \".*\"|  sha256 \"$DMG_SHA\"|" \
+              Casks/parrot.rb
+          else
+            echo "::warning::unsigned build — leaving Casks/parrot.rb at its previous version."
+          fi
+
+          git diff --stat
+
+      - name: commit and push
+        if: steps.token.outputs.enabled == 'true'
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          cd tap
+          if git diff --quiet; then
+            echo "tap already up to date"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "parrot $VERSION"
+          git push
