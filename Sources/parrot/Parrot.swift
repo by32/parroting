@@ -204,130 +204,24 @@ struct Run: ParsableCommand {
             throw ExitCode(1)
         }
 
-        let app = NSApplication.shared
-        app.setActivationPolicy(.accessory)
-
-        let monitor = HotkeyMonitor(hotkey: hotkey, debug: debugHotkey)
-        let capture = AudioCapture()
-        let dumpWav = self.dumpWav
-        let overlay: RecordingOverlay? = showOverlay
-            ? MainActor.assumeIsolated { RecordingOverlay() }
-            : nil
-        if let overlay {
-            capture.onLevel = { level in overlay.pushLevel(level) }
+        try MainActor.assumeIsolated {
+            let daemon = Daemon(
+                transcriber: transcriber,
+                processor: processor,
+                refiner: refiner,
+                refineMode: refineMode,
+                refineStyle: effectiveRefineStyle,
+                styles: styles,
+                sensitivity: sensitivity,
+                hotkey: hotkey,
+                languageDisplayName: language.displayName,
+                showOverlay: showOverlay,
+                debugHotkey: debugHotkey,
+                dumpWav: dumpWav,
+                modelID: chosenModel.id
+            )
+            try daemon.run()
         }
-        let menuBar = MainActor.assumeIsolated {
-            MenuBarController(modelID: chosenModel.id, hotkeyName: hotkey.displayName)
-        }
-
-        do {
-            try monitor.start { event in
-                switch event {
-                case .pressed:
-                    do {
-                        try capture.start()
-                        FileHandle.standardError.write(Data("● recording\n".utf8))
-                        MainActor.assumeIsolated {
-                            overlay?.show(.recording)
-                            menuBar.setRecording(true)
-                        }
-                    } catch {
-                        FileHandle.standardError.write(Data("capture failed: \(error)\n".utf8))
-                    }
-                case .released:
-                    let samples = capture.stop()
-                    let frontmostBundleID = MainActor.assumeIsolated {
-                        NSWorkspace.shared.frontmostApplication?.bundleIdentifier
-                    }
-                    MainActor.assumeIsolated {
-                        overlay?.show(.transcribing)
-                        menuBar.setTranscribing()
-                    }
-                    let seconds = Double(samples.count) / AudioCapture.targetSampleRate
-                    let rms = computeRMS(samples)
-                    FileHandle.standardError.write(Data(
-                        String(format: "○ captured %.2fs · rms %.3f\n", seconds, rms).utf8
-                    ))
-                    if dumpWav, !samples.isEmpty {
-                        let path = "/tmp/parrot-last.wav"
-                        do {
-                            try WAVWriter.write(samples: samples, sampleRate: 16_000, to: path)
-                            FileHandle.standardError.write(Data("  wrote \(path)\n".utf8))
-                        } catch {
-                            FileHandle.standardError.write(Data("  wav write failed: \(error)\n".utf8))
-                        }
-                    }
-                    let verdict = CaptureGate.evaluate(
-                        sampleCount: samples.count,
-                        rms: rms,
-                        sensitivity: sensitivity
-                    )
-                    if let reason = verdict.rejectionReason {
-                        FileHandle.standardError.write(Data("  skipped · \(reason)\n".utf8))
-                        MainActor.assumeIsolated {
-                            overlay?.hide()
-                            menuBar.setRecording(false)
-                        }
-                        return
-                    }
-                    Task {
-                        let started = Date()
-                        do {
-                            let raw = try await transcriber.transcribe(samples)
-                            var text = processor.process(raw)
-
-                            if let refiner, !text.isEmpty {
-                                let style = frontmostBundleID.flatMap { styles.style(for: $0) }
-                                    ?? effectiveRefineStyle
-                                do {
-                                    let refined = try await refiner.refine(text, style: style)
-                                    if !refined.isEmpty { text = refined }
-                                } catch {
-                                    FileHandle.standardError.write(Data(
-                                        "refine failed: \(error) — using raw transcript\n".utf8
-                                    ))
-                                }
-                            }
-
-                            let elapsed = Date().timeIntervalSince(started)
-                            FileHandle.standardError.write(Data(
-                                String(format: "→ %.2fs · %@\n", elapsed, text).utf8
-                            ))
-                            let final = text
-                            await MainActor.run {
-                                TextInjector.inject(final)
-                                overlay?.hide()
-                                menuBar.setRecording(false)
-                            }
-                        } catch {
-                            FileHandle.standardError.write(Data("transcription failed: \(error)\n".utf8))
-                            await MainActor.run {
-                                overlay?.hide()
-                                menuBar.setRecording(false)
-                            }
-                        }
-                    }
-                }
-            }
-        } catch {
-            FileHandle.standardError.write(Data("failed to register hotkey tap: \(error)\n".utf8))
-            FileHandle.standardError.write(Data("run `parrot setup` to configure permissions.\n".utf8))
-            throw ExitCode(1)
-        }
-
-        let sigint = DispatchSource.makeSignalSource(signal: SIGINT, queue: .main)
-        sigint.setEventHandler {
-            FileHandle.standardError.write(Data("\nshutting down\n".utf8))
-            monitor.stop()
-            NSApp.terminate(nil)
-        }
-        sigint.resume()
-        signal(SIGINT, SIG_IGN)
-
-        let banner = "listening on \(hotkey.displayName) hold · model: \(chosenModel.id)"
-            + " · lang: \(language.displayName) · refine: \(refineMode.rawValue) · ^C to quit\n"
-        FileHandle.standardError.write(Data(banner.utf8))
-        app.run()
     }
 }
 
