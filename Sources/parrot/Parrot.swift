@@ -156,6 +156,17 @@ struct Run: ParsableCommand {
             FileHandle.standardError.write(Data("snippets: \(snippets.count) cues\n".utf8))
         }
 
+        let styles: Styles
+        do {
+            styles = try Styles.load()
+        } catch {
+            FileHandle.standardError.write(Data("styles error: \(error)\n".utf8))
+            throw ExitCode(1)
+        }
+        if !styles.isEmpty {
+            FileHandle.standardError.write(Data("styles: \(styles.count) apps\n".utf8))
+        }
+
         let processor = TranscriptProcessor(snippets: snippets, dictionary: dictionary)
 
         let refineMode = self.refine ?? config.refine ?? .off
@@ -225,6 +236,9 @@ struct Run: ParsableCommand {
                     }
                 case .released:
                     let samples = capture.stop()
+                    let frontmostBundleID = MainActor.assumeIsolated {
+                        NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+                    }
                     MainActor.assumeIsolated {
                         overlay?.show(.transcribing)
                         menuBar.setTranscribing()
@@ -263,8 +277,10 @@ struct Run: ParsableCommand {
                             var text = processor.process(raw)
 
                             if let refiner, !text.isEmpty {
+                                let style = frontmostBundleID.flatMap { styles.style(for: $0) }
+                                    ?? effectiveRefineStyle
                                 do {
-                                    let refined = try await refiner.refine(text, style: effectiveRefineStyle)
+                                    let refined = try await refiner.refine(text, style: style)
                                     if !refined.isEmpty { text = refined }
                                 } catch {
                                     FileHandle.standardError.write(Data(
