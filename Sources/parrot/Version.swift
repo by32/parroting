@@ -4,5 +4,5 @@
 /// so a forgotten bump fails the release rather than shipping a binary that
 /// misreports itself. Bump this in the same commit that cuts a tag.
 enum Version {
-    static let current = "0.1.0"
+    static let current = "0.1.1"
 }

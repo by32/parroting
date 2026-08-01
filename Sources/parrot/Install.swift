@@ -135,12 +135,25 @@ struct Install: ParsableCommand {
         )
         try data.write(to: url, options: .atomic)
 
+        let domain = "gui/\(uid())"
+
         // Best-effort bootstrap; ignore failure if already loaded.
-        _ = runLaunchctl(["bootout", "gui/\(uid())", url.path])
-        let result = runLaunchctl(["bootstrap", "gui/\(uid())", url.path])
+        _ = runLaunchctl(["bootout", domain, url.path])
+        let result = runLaunchctl(["bootstrap", domain, url.path])
         if result.status != 0 {
             FileHandle.standardError.write(Data(
                 "warning: launchctl bootstrap exited \(result.status):\n\(result.stderr)\n".utf8
+            ))
+        }
+
+        // RunAtLoad is not a promise of "now". launchd frequently defers the
+        // initial spawn ("pended nondemand spawn"), which left the daemon not
+        // running until the next login even though bootstrap succeeded. Kickstart
+        // makes install mean started.
+        let start = runLaunchctl(["kickstart", "-p", "\(domain)/\(Self.label)"])
+        if start.status != 0 {
+            FileHandle.standardError.write(Data(
+                "warning: launchctl kickstart exited \(start.status):\n\(start.stderr)\n".utf8
             ))
         }
 
@@ -185,25 +198,42 @@ struct Install: ParsableCommand {
         return removed
     }
 
+    /// Where the installer looks if the running executable's path is unusable.
+    static let fallbackBinaryPaths = ["/usr/local/bin/parrot", "/opt/homebrew/bin/parrot"]
+
+    /// Pick the binary path to record in the LaunchAgent.
+    ///
+    /// Prefers the executable that is actually running. Preferring a hardcoded
+    /// location instead means `/opt/homebrew/bin/parrot install` registers
+    /// `/usr/local/bin/parrot` — a different copy, which after `brew upgrade` is
+    /// a *stale* copy, and which holds its own Accessibility grant. The daemon
+    /// then silently runs old code with permissions the new binary lacks.
+    ///
+    /// Deliberately does not resolve symlinks: Homebrew's `bin/parrot` points
+    /// into a versioned Cellar directory, so recording the symlink survives
+    /// upgrades while recording its target would break on every one.
+    static func agentBinaryPath(
+        executablePath: String?,
+        isExecutable: (String) -> Bool
+    ) -> String? {
+        if let executablePath, executablePath.hasPrefix("/"), isExecutable(executablePath) {
+            return executablePath
+        }
+        return fallbackBinaryPaths.first(where: isExecutable)
+    }
+
     private func resolveBinaryPath() throws -> String {
-        // /usr/local/bin/parrot is the canonical install path. Honor a real
-        // location if running from elsewhere (e.g. dev).
-        let candidate = "/usr/local/bin/parrot"
-        if FileManager.default.isExecutableFile(atPath: candidate) {
-            return candidate
-        }
-        // Fall back to the running executable's resolved path.
-        let argv0 = CommandLine.arguments.first ?? "parrot"
-        if argv0.hasPrefix("/"), FileManager.default.isExecutableFile(atPath: argv0) {
+        let resolved = Self.agentBinaryPath(
+            executablePath: Bundle.main.executablePath,
+            isExecutable: { FileManager.default.isExecutableFile(atPath: $0) }
+        )
+        guard let resolved else {
             FileHandle.standardError.write(Data(
-                "note: /usr/local/bin/parrot not found; using \(argv0)\n".utf8
+                "couldn't locate the parrot binary. install it to /usr/local/bin/parrot first.\n".utf8
             ))
-            return argv0
+            throw ExitCode(1)
         }
-        FileHandle.standardError.write(Data(
-            "couldn't locate the parrot binary. install it to /usr/local/bin/parrot first.\n".utf8
-        ))
-        throw ExitCode(1)
+        return resolved
     }
 
     private func uid() -> uid_t { getuid() }
