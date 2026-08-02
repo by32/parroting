@@ -277,6 +277,20 @@ The scripts are independently runnable so packaging can be debugged without push
 - `scripts/verify-binary.sh` — asserts the build is arm64 and actually links `FoundationModels`. `LocalRefiner` sits behind `#if canImport(FoundationModels)`, so building against a pre-macOS-26 SDK silently compiles it away and `--refine local` fails at runtime. This turns that into a build failure.
 - `scripts/bundle-app.sh` — assembles `Parrot.app` from `packaging/Info.plist`, and cross-checks that the binary's `--version` matches the version being stamped in.
 - `scripts/sign-notarize.sh` — signs with Hardened Runtime, notarizes, staples, and builds the DMG. Auto-discovers a `Developer ID Application` identity, and refuses to proceed with an Apple Distribution or Apple Development cert since Gatekeeper rejects those for direct distribution.
+- `scripts/install-local.sh` — build, sign, and install to `/Applications` in one step, for working on the daemon locally. Notarization is skipped deliberately: it exists so *other* Macs will run a downloaded app and does nothing for one you signed and run yourself.
+
+### Signing locally is not optional
+
+Running an unsigned local build costs you the Accessibility grant on every rebuild, so `install-local.sh` signs with whatever it can find, preferring `Developer ID Application` and falling back to `Apple Development`. The fallback is enough for local use because TCC matches on the *designated requirement*, and for any real certificate that requirement names the bundle ID and the signing cert rather than the code:
+
+```
+identifier "io.github.by32.parroting" and anchor apple generic
+  and certificate leaf[subject.CN] = "Apple Development: ..." and ...
+```
+
+Ad-hoc signing (`codesign -s -`) produces `cdhash H"..."` instead, which pins one exact build and so behaves no better than not signing. The script extracts the requirement and refuses to install if it contains a cdhash. Note that `codesign -d -r-` *comments out* the line for an ad-hoc signature (`# designated => ...`), so the parser has to tolerate the leading `#` — without that the check reads empty and silently passes.
+
+An `Apple Development` cert expires in about a year and Gatekeeper rejects it on other machines, so it is a local-development answer only; distribution still needs Developer ID plus notarization.
 
 Signing is conditional on the `MACOS_CERT_P12` secret. Without it the workflow still publishes the unsigned tarball, so the CLI channel never depends on certificate availability.
 
